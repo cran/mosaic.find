@@ -1,0 +1,335 @@
+---
+title: "Introduction to Using MOSAIC"
+author: "Hannah De los Santos"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction to Using MOSAIC}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+<style type="text/css">
+
+h1.title {
+  text-align: center;
+}
+h4.author { 
+  text-align: center;
+}
+h4.date { 
+  text-align: center;
+}
+</style>
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  # collapse = FALSE,
+  # comment = "#>"
+  results = "hold"
+)
+```
+
+The *mosaic.find* package provides a function (mosaic_find()) designed to find rhythmic and non-rhythmic trends in multi-omics time course data using model selection and joint modeling, a method called MOSAIC (Multi-Omics Selection with Amplitude Independent Criteria). To read more about our work on this project and cite us, see [MOSAIC: A Joint Modeling Methodology for Combined Circadian and Non-Circadian Analysis of Multi-Omics Data](https://www.biorxiv.org/content/10.1101/2020.04.27.064147v1) by H. De los Santos et al. (2020)
+
+Further, for users who prefer an interface more than coding, as well as built-in visualizations, our GitHub repository can be found [here](https://github.com/delosh653/MOSAIC). There, you can find a Shiny application for finding trends and automatically visualizing results, with features such as summary visualizations, heat maps, gene expression plots (with or without replicates visualized), and parameter density graphs. It will also have the most up-to-date features. A FAQ for possible user errors can also be found there.
+
+In this vignette, we'll walk through an example of how to use *mosaic.find*, and how to choose from the several different built-in methods of preprocessing.
+
+## Loading and Examining Data
+
+We'll start by loading our library, which contains the mosaic_find() function. It also has two example datsets: expressions_rna, which contains synthetic RNA expression data; and expressions_pro, which contains synthetic protein expression data. We'll be using both throughout this vignette. Here we'll look at the first few rows and columns of our dataset.
+
+```{r}
+library(mosaic.find)
+
+head(expressions_rna[,1:5])
+head(expressions_pro[,1:5])
+```
+
+Note the data format: its first column first column has gene labels/names, and all other columns have numerical expression data for RNA and protein, respectively. This expression data is ordered by time point then by replicate, and has evenly spaced time points. Any missing data has cells left blank (NA). Also note that the sample names/labels are the same between our RNA and protein datasets, to indicate corresponding expression data. Any expressions with a name not found in the other dataset will not be reflected in the results. In order to use the mosaic_find() function, data must be in this format. 
+
+Now, let's look at one the expressions, Sample 2. Here we plot RNA in blue and protein in red. each of the replicates in a different color, then plot the difference between them in gray.
+
+```{r fig.align="center",fig.height = 5, fig.width = 7,warning=FALSE}
+
+library(ggplot2)
+
+# making a function to plot expression, since we're going to use it again
+# samp: sample name that we want to visualize
+# expressions_rna, expressions_pro: our original RNA and protein expression data frames
+# results: data frame of mosaic results
+plot_exp <- function(samp, expressions_rna, expressions_pro, results = data.frame()){
+  # color information
+  rna_blue_high <- "#268beb"
+  pro_red_high <- "#d61e1e"
+  
+  rna_blue_low <- "#9ebfde"
+  pro_red_low <- "#d49d9d"
+  
+  # making a function to create automatic palettes for rna and protein vizualizations
+  rna_col_func <- colorRampPalette(c(rna_blue_low, rna_blue_high))
+  pro_col_func <- colorRampPalette(c(pro_red_low, pro_red_high))
+  
+  tp <- seq(2,48,by=2) # our time points
+  num_reps <- 3 # number of replicates
+  
+  # set to plot either the mosaic results or the original data
+  if (nrow(results) == 0){ 
+    # we're plotting the original data
+    dat_rna <- expressions_rna[,-1]
+    dat_pro <- expressions_pro[,-1]
+    
+    # logicals for the position of our desired sample in each dataset
+    gene_log_rna <- expressions_rna$Sample_Name == samp
+    gene_log_pro <- expressions_pro$Sample_Name == samp
+  } else {
+    # last number that is a parameter in the results dataset
+    end_num <- 33
+
+    # we're plotting the processed original data and the fitted data
+    dat_rna <- results[,(end_num+1):((end_num+1)+((length(tp)*num_reps)-1))]
+    fit_rna <- results[,(end_num+(length(tp)*num_reps)+1):((end_num+(length(tp)*num_reps)+1)+(length(tp)-1))]
+    dat_pro <- results[,(end_num+(length(tp)*num_reps)+1+length(tp)):(end_num+(length(tp)*num_reps*2)+1+length(tp)-1)]
+    fit_pro <- results[,(end_num+(length(tp)*num_reps*2)+1+length(tp)):ncol(results)]
+    
+    # logicals for the position of our desired sample
+    gene_log_rna <- gene_log_pro <- results$Gene_Name == samp
+  }
+  
+  # our visualization data frame
+  gg.df <- data.frame(
+    # maximum over time points
+    "rna_max" = sapply(seq(1,ncol(dat_rna), by = num_reps), function(x) max(dat_rna[gene_log_rna,x:(x+num_reps-1)], na.rm = T)),
+    "pro_max" = sapply(seq(1,ncol(dat_pro), by = num_reps), function(x) max(dat_pro[gene_log_pro,x:(x+num_reps-1)], na.rm = T)),
+    # minimum over time points
+    "rna_min" = sapply(seq(1,ncol(dat_rna), by = num_reps), function(x) min(dat_rna[gene_log_rna,x:(x+num_reps-1)], na.rm = T)),
+    "pro_min" = sapply(seq(1,ncol(dat_pro), by = num_reps), function(x) min(dat_pro[gene_log_pro,x:(x+num_reps-1)], na.rm = T)),
+    "timen" = tp # time points
+  )
+  
+  # colors for lines and shading
+  col_vect <- c(
+    "Original RNA" = rna_blue_low,
+    "Original Protein" = pro_red_low
+  )
+  
+  # only plot individual replicates if we're only plotting the original data
+  if (nrow(results) == 0){
+    # add replicate colors
+    # add two to provide more variability
+    rna_rep_col <- rna_col_func(num_reps+2)
+    pro_rep_col <- pro_col_func(num_reps+2)
+    
+    # add replicates to df and color scale
+    for (i in 1:num_reps){
+      gg.df[,paste0("rna_rep",i)] <- as.numeric(dat_rna[gene_log_rna,seq(i, ncol(dat_rna), by=num_reps)])
+      gg.df[,paste0("pro_rep",i)] <- as.numeric(dat_pro[gene_log_pro,seq(i, ncol(dat_pro), by=num_reps)])
+    
+      col_vect[paste0("RNA, Replicate ",i)] <- rna_rep_col[i+1]
+      col_vect[paste0("Protein, Replicate ",i)] <- pro_rep_col[i+1]
+    }
+  } else {
+    # otherwise, we plot the model fits
+    gg.df$rna_fit <- as.numeric(fit_rna[gene_log_rna,])
+    gg.df$pro_fit <- as.numeric(fit_pro[gene_log_pro,])
+    
+    # add the colors
+    col_vect["Fit RNA"] <- rna_blue_high
+    col_vect["Fit Protein"] <- pro_red_high
+  }
+  
+  # name breaks for the colors in the legend
+  col_name_breaks <- c(names(col_vect)[grepl("RNA", names(col_vect), fixed = T)],
+                       names(col_vect)[grepl("Protein", names(col_vect), fixed = T)])
+  
+  # visualize, with shading for each omics type
+  p <- ggplot(gg.df, aes(x = timen))+
+    # setting up scales and labels
+    scale_fill_manual("", values = col_vect, breaks = col_name_breaks)+
+    scale_color_manual("", values = col_vect, breaks = col_name_breaks)+
+    ylab("Expression")+
+    xlab("Time (Hours)")+
+    theme_bw()+
+    theme(
+      plot.title = element_text(hjust = .5),
+      legend.position = "bottom",
+      legend.direction = "horizontal"
+    )+
+    scale_x_continuous(expand = c(0, 0))+
+    # add shading for original rna and protein data
+    geom_ribbon(aes(ymax = rna_max, ymin = rna_min, fill = "Original RNA"), alpha = .5)+
+    geom_ribbon(aes(ymax = pro_max, ymin = pro_min, fill = "Original Protein"), alpha = .5)+
+    ggtitle(samp)+ # title
+    guides( # colors
+      color = guide_legend(nrow = 2, byrow = T),
+      fill = guide_legend(nrow = 2)
+    )+
+    NULL
+  
+  
+  # only plot individual replicates if we're only plotting the original data
+  if (nrow(results) == 0){
+    # add each of the replicates
+    for (i in 1:num_reps){
+      p <- p +
+        geom_line(aes_string(y = paste0("rna_rep",i), color = shQuote(paste0("RNA, Replicate ",i))))+
+        geom_line(aes_string(y = paste0("pro_rep",i), color = shQuote(paste0("Protein, Replicate ",i))))+
+        NULL
+    }
+  } else { # otherwise, plot the fits
+    p <- p +
+      geom_line(aes(y = rna_fit, color = "Fit RNA"), size = 1)+
+      geom_line(aes(y = pro_fit, color = "Fit Protein"), size = 1)+
+      NULL
+  }
+  
+  return(p)
+}
+
+suppressWarnings(plot_exp("Sample_2", expressions_rna, expressions_pro)) # to ignore warnings for missing values
+
+```
+
+We can see that this sample manifests very differently depending on the omics type! In RNA, Sample 2 seems to be a rhythmic gene with damping, while in protein, Sample 2 is clearly linear. This difference in expression makes mosaic_find() the perfect function for our dataset. 
+
+## Running mosaic_find()
+
+So we begin by assigning our parameters and running the mosaic_find() function. In this first run, in addition to looking for trends, we want to look for rhythms between 20 and 28 hours, with no preprocessing, assigning these results to a new dataframe.
+
+```{r}
+# run mosaic_find()
+results <- mosaic_find(
+  rna  = expressions_rna, # rna data
+  pro = expressions_pro, # protein data
+  begin = 2, # first time point (hours)
+  end = 48, # last time point (hours)
+  resol = 2, # resolution (hours)
+  num_reps = 3, # number of replicates
+  paired = F, # unpaired, or unrelated, replicates
+  low = 20, # lower limit when looking for rhythms (hours)
+  high = 28 # lower limit when looking for rhythms (hours)
+)
+
+# look at the results!
+head(results[,1:16], 5)
+```
+
+Looks like we've sucessfully run MOSAIC! Now we can see that the results data frame has information about which models fit each of the expressions in our omics types, the parameters for those models, and p-values. You'll also notice that it reordered our sample names. For more information on the models and parameters available, please see [MOSAIC: A Joint Modeling Methodology for Combined Circadian and Non-Circadian Analysis of Multi-Omics Data](https://www.biorxiv.org/content/10.1101/2020.04.27.064147v1).
+
+So, first, let's take a look at the distributions of our models in each of our omics types!
+
+```{r fig.align="center",fig.height = 5, fig.width = 7}
+
+# making a function, since we'll be using this again later
+plot_dist <- function(results){
+  # first, we only want to consider significant expressions
+  sig_rna <- results$BH_Adj_P_Value_RNA < .05
+  sig_pro <- results$BH_Adj_P_Value_Protein < .05
+  
+  # then get the significant models for each omics type
+  mod_rna <- results$Best_Model_RNA[sig_rna]
+  mod_pro <- results$Best_Model_Protein[sig_pro]
+  
+  # form into the data frame for plotting
+  gg.df <- data.frame(
+    "Model" = c(mod_rna, mod_pro),
+    "Omics_Type" = c(rep("RNA", length(mod_rna)), rep("Protein",length(mod_pro)))
+  )
+  
+  # colors
+  col_proper <- c("Linear" = "#b32515", # red
+           "Exponential" = "#e39f22", # orange
+           "ECHO" = "#3461eb", # blue
+           "ECHO Joint" = "#5c7de0", # light blue
+           "ECHO Linear" = "#7b2bcc", # purple
+           "ECHO Linear Joint" = "#945fc9" # light purple
+  )
+  
+  # make a bar chart of distributions for each model type
+  ggplot(gg.df, aes(Omics_Type, fill = Model))+
+    geom_bar()+
+    theme_bw()+
+    ylab("Total Significant Expressions")+
+    xlab("Omics Type")+
+    theme_bw()+
+    theme(
+      plot.title = element_text(hjust = .5),
+      legend.position = "bottom",
+      legend.direction = "horizontal"
+    )+
+    ggtitle("MOSAIC Model Distributions")+ # title
+    guides( # colors
+      fill = guide_legend(nrow = 2)
+    )+
+    scale_y_continuous(expand = expand_scale(mult = c(0, .1)))+
+    scale_fill_manual("Model", values = col_proper)+
+    NULL
+}
+
+# plot our model distributions!
+plot_dist(results)
+```
+
+So we can see that each of our omics types has roughly similar distributions, with mostly non-oscillatory models, Linear and Protein, making up most of the distribution, but with roughly 200 of the genes remaining oscillatory.
+
+Let's next look at how the fit turned out for our initial sample. Here, we add the fitted values to our plot and print the parameters to the console.
+
+```{r fig.align="center",fig.height = 5, fig.width = 7}
+
+# plot our fitted data!
+suppressWarnings(plot_exp("Sample_2", expressions_rna, expressions_pro, results)) # to ignore warnings for missing values
+
+# print our parameters for our sample
+results[results$Gene_Name == "Sample_2",]
+
+```
+
+We can see that MOSAIC did a great job with these fits, with the fits matching closely to the trend. Looking at the subset of results corresponding to Sample 2, we can see that MOSAIC correctly designated our RNA data as an ECHO model with damping, and our protein data as a linear model with a positive slope. These fits match pretty closely to the trend, which are emphasized by their very low BH adjusted p-values.
+
+Now let's see how preprocessing affects the results. Here, we're going to search for all possible periods, as well as allowing for all our preprocessing options: removing unexpressed genes, normalizing, and smoothing. These preprocessing methods are described in [our paper](https://www.biorxiv.org/content/10.1101/2020.04.27.064147v1).
+
+
+```{r}
+# run mosaic_find() with preprocessing
+results <- mosaic_find(
+  rna  = expressions_rna, # rna data
+  pro = expressions_pro, # protein data
+  begin = 2, # first time point (hours)
+  end = 48, # last time point (hours)
+  resol = 2, # resolution (hours)
+  num_reps = 3, # number of replicates
+  paired = F, # unpaired, or unrelated, replicates
+  run_all_per = T, # now we're looking for any period within our time course
+  rem_unexpr = T, # remove any unexpressed genes (we don't have any, but some time courses might)
+  rem_unexpr_amt = 70, # if we have less than 70% expression, we want to remove the gene
+  rem_unexpr_amt_below = 0, # unexpressed genes are those with expression equal to 0
+  is_normal = T, # normalize data
+  is_smooth = T # smooth the data
+)
+
+# look at the results!
+head(results[,1:16], 5)
+
+```
+
+Let's look at how this preprocessing affected our distribution and original sample!
+
+```{r fig.align="center",fig.height = 5, fig.width = 7}
+
+# plot our model distributions!
+plot_dist(results)
+
+# plot our fitted data!
+suppressWarnings(plot_exp("Sample_2", expressions_rna, expressions_pro, results)) # to ignore warnings for missing values
+
+# print our parameters for our sample
+results[results$Gene_Name == "Sample_2",]
+
+```
+
+We can see that the distributions are a little more even now between our omics types, with much of the same effects between them. We can also see the effects of our preprocessing -- normalization put our expressions on the same scale, and smoothing has reduced the space between our replicates. Though the fit hasn't changed very much, it's important to note that smoothing has also reduced the amount of damping in the system: the amplitude change coefficient has decreased by about .02. More discussions on the effects of preprocessing can be found in the supplemental information of [ECHO: an application for detection and analysis of oscillators identifies metabolic regulation on genome-wide circadian output](https://academic.oup.com/bioinformatics/article-abstract/36/3/773/5544107).
+
+Other selections are also available, including adjustments for the harmonic and overexpressed cutoffs for ECHO and ECHO linear modelscan be adjusted through the harm_cut and over_cut parameters, respectively, though the defaults are recommended.
+
+Now that you understand the basics of using the mosaic_find() function, feel free to experiment and play around with this vignette and the example data. Good luck with your multi-omics trend searches!
