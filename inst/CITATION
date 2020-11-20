@@ -1,15 +1,19 @@
 citHeader("To cite mosaic.find in publications use:")
 
-citEntry(entry = "Article",
-  title        = "MOSAIC: A Joint Modeling Methodology for Combined Circadian and Non-Circadian Analysis of Multi-Omics Data",
+citEntry(entry = "article",
+  title        = "{MOSAIC}: a joint modeling methodology for combined circadian and Non-Circadian analysis of Multi-Omics data",
   author       = personList(person(given="Hannah", family="De los Santos"),
                   as.person("Kristin P. Bennett"),
                   as.person("Jennifer M. Hurley")),
-  journal      = "bioRxiv",
+  journal      = "Bioinformatics",
   year         = "2020",
-	url = "https://www.biorxiv.org/content/early/2020/04/29/2020.04.27.064147",
-	doi = "10.1101/2020.04.27.064147",
-	publisher = "Cold Spring Harbor Laboratory",
+  month = "oct",
+  issn = "1367-4803",
+	url = "https://doi.org/10.1093/bioinformatics/btaa877",
+	doi = "10.1093/bioinformatics/btaa877",
+	publisher = "Oxford University Press ({OUP})",
+  note = "btaa877",
+  eprint = "https://academic.oup.com/bioinformatics/advance-article-pdf/doi/10.1093/bioinformatics/btaa877/33880007/btaa877.pdf",
 
-  textVersion  = "H. De los Santos, K. P. Bennett, and J. M. Hurley, 'MOSAIC: A Joint Modeling Methodology for Combined Circadian and Non-Circadian Analysis of Multi-Omics Data,' bioRxiv, 2020, doi: 10.1101/2020.04.27.064147"
+  textVersion  = "Hannah De los Santos, Kristin P Bennett, Jennifer M Hurley, MOSAIC: a joint modeling methodology for combined circadian and Non-Circadian analysis of Multi-Omics data, Bioinformatics, btaa877, https://doi.org/10.1093/bioinformatics/btaa877"
 )
